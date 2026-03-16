@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from "react";
 import Webcam from "react-webcam";
+import { useNavigate } from "react-router-dom";
 import * as faceapi from "face-api.js";
 import { COLORS, DISPLAY_SIZE } from "./constants";
 import { RegisterModal, VerifyModal, AlertModal } from "./components/Modals";
@@ -12,6 +13,7 @@ interface UserData {
 }
 
 export const ReconhecimentoFacial: React.FC = () => {
+  const navigate = useNavigate();
   const webcamRef = useRef<Webcam>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -201,6 +203,16 @@ export const ReconhecimentoFacial: React.FC = () => {
             }}
           >
             {isScanning ? "🛑 Parar Busca" : "🔍 Iniciar Validação"}
+          </button>
+
+          <button
+            onClick={() => navigate("/massa")}
+            style={{
+              ...styles.primaryButton,
+              backgroundColor: COLORS.scanLine,
+            }}
+          >
+            🚀 ID em Massa
           </button>
         </div>
 

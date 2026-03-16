@@ -11,4 +11,5 @@ export const COLORS = {
 };
 
 export const DISPLAY_SIZE = { width: 250, height: 400 };
+export const WIDE_DISPLAY_SIZE = { width: 720, height: 500 };
 export const FACE_CONFIDENCE_THRESHOLD = 0.45;
