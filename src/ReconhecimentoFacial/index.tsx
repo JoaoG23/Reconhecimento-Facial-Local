@@ -1,34 +1,23 @@
-import { useRef, useState, useEffect, useCallback } from "react";
+import { useRef, useState, useEffect } from "react";
 import Webcam from "react-webcam";
 import * as faceapi from "face-api.js";
-
-// Configurações constantes
-const FACE_CONFIDENCE_THRESHOLD = 0.45;
-const DISPLAY_SIZE = { width: 250, height: 400 };
-
-const COLORS = {
-  primary: "#0056b3",
-  secondary: "#e1f0ff",
-  background: "#f8faff",
-  white: "#ffffff",
-  text: "#2c3e50",
-  success: "#28a745",
-  danger: "#dc3545",
-  overlay: "rgba(0, 40, 85, 0.5)",
-  scanLine: "#3498db",
-};
+import { COLORS, DISPLAY_SIZE } from "./constants";
+import { RegisterModal, VerifyModal, AlertModal } from "./components/Modals";
+import { buscarRostoEmDB } from "../helpers/buscarRostoEmDB";
+import { salvarRostoEmDB } from "../helpers/salvarRostoEmDB";
 
 interface UserData {
   name: string;
   descriptor: number[];
 }
 
-export const ReconhecimentoFacial = () => {
+export const ReconhecimentoFacial: React.FC = () => {
   const webcamRef = useRef<Webcam>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Estados principais
   const [savedUser, setSavedUser] = useState<UserData | null>(null);
+  const [hasRegisteredUsers, setHasRegisteredUsers] = useState(false);
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [isScanning, setIsScanning] = useState(false); // NOVO: Controle de scan automático
 
@@ -44,13 +33,21 @@ export const ReconhecimentoFacial = () => {
     isMatch: boolean;
     confidence: string;
   } | null>(null);
+  const [alertConfig, setAlertConfig] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    type: "success" | "error" | "info";
+  }>({ show: false, title: "", message: "", type: "info" });
 
   useEffect(() => {
     async function init() {
       await loadModels();
-      const data = localStorage.getItem("faceUserData");
-      console.log(data);
-      if (data) setSavedUser(JSON.parse(data));
+      const data = localStorage.getItem("faceUsers");
+      if (data) {
+        const users = JSON.parse(data);
+        setHasRegisteredUsers(users.length > 0);
+      }
     }
     init();
   }, []);
@@ -83,31 +80,38 @@ export const ReconhecimentoFacial = () => {
     let active = true;
 
     const runScan = async () => {
-      if (!isScanning || !savedUser || !active) return;
+      if (!isScanning || !active) return;
 
       const detection = await captureSingleFrame();
 
       if (detection && isScanning) {
-        const savedDescriptorArray = new Float32Array(savedUser.descriptor);
-        const distance = faceapi.euclideanDistance(
-          savedDescriptorArray,
-          detection.descriptor,
-        );
+        const match = await buscarRostoEmDB(detection.descriptor);
 
-        if (distance < FACE_CONFIDENCE_THRESHOLD) {
+        if (match) {
           // SUCESSO! Para o scan e mostra o modal
           setIsScanning(false);
+          setSavedUser(match); // Salva o usuário encontrado
           setValidationResult({
             isMatch: true,
-            confidence: (1 - distance).toFixed(2),
+            confidence: (1 - match.distance).toFixed(2),
           });
           setCapturedImage(webcamRef.current?.getScreenshot() || null);
+          setShowVerifyModal(true);
+          return;
+        } else {
+          // DIVERGENTE OU NÃO ENCONTRADO! 
+          // Só mostra o modal de erro se realmente não achou ninguém após processar
+          setIsScanning(false);
+          setValidationResult({
+            isMatch: false,
+            confidence: detection ? "0.00" : "N/A",
+          });
           setShowVerifyModal(true);
           return;
         }
       }
 
-      // Se não achou ou não bateu, tenta de novo no próximo frame (recursão controlada)
+      // Se não achou rosto, tenta de novo no próximo frame (recursão controlada)
       if (isScanning && active) {
         setTimeout(runScan, 100);
       }
@@ -117,7 +121,7 @@ export const ReconhecimentoFacial = () => {
     return () => {
       active = false;
     };
-  }, [isScanning, savedUser]);
+  }, [isScanning]);
 
   const handleStartRegister = async () => {
     const detection = await captureSingleFrame();
@@ -126,20 +130,27 @@ export const ReconhecimentoFacial = () => {
       setCapturedImage(webcamRef.current?.getScreenshot() || null);
       setShowRegisterModal(true);
     } else {
-      alert("Posicione seu rosto na moldura antes de cadastrar.");
+      setAlertConfig({
+        show: true,
+        title: "Atenção",
+        message: "Posicione seu rosto na moldura antes de cadastrar.",
+        type: "info",
+      });
     }
   };
-  console.log(tempDescriptor);
 
-  const confirmRegistration = () => {
-    if (!tempName.trim()) return;
-    const userData = {
-      name: tempName,
-      descriptor: Array.from(tempDescriptor!),
-    };
-    localStorage.setItem("faceUserData", JSON.stringify(userData));
-    setSavedUser(userData);
-    alert("✅ CADASTRADO COM SUCESSO!");
+  const confirmRegistration = async () => {
+    if (!tempName.trim() || !tempDescriptor) return;
+    
+    await salvarRostoEmDB(tempName, tempDescriptor);
+    setHasRegisteredUsers(true);
+    
+    setAlertConfig({
+      show: true,
+      title: "Sucesso",
+      message: "Cadastro concluído com sucesso!",
+      type: "success",
+    });
     closeModals();
   };
 
@@ -149,22 +160,8 @@ export const ReconhecimentoFacial = () => {
     setIsScanning(false);
     setTempName("");
     setCapturedImage(null);
+    setAlertConfig((prev: any) => ({ ...prev, show: false }));
   };
-
-  const Modal = ({ title, children, onClose, footer }: any) => (
-    <div style={styles.modalOverlay}>
-      <div style={styles.modalContent}>
-        <h3 style={{ color: COLORS.primary }}>{title}</h3>
-        <div style={{ margin: "20px 0" }}>{children}</div>
-        <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
-          {footer}
-          <button onClick={onClose} style={styles.secondaryButton}>
-            Fechar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 
   return (
     <div style={styles.container}>
@@ -196,11 +193,11 @@ export const ReconhecimentoFacial = () => {
 
           <button
             onClick={() => setIsScanning(!isScanning)}
-            disabled={!savedUser}
+            disabled={!hasRegisteredUsers}
             style={{
               ...styles.primaryButton,
               backgroundColor: isScanning ? COLORS.danger : COLORS.primary,
-              display: savedUser ? "block" : "none",
+              display: hasRegisteredUsers ? "block" : "none",
             }}
           >
             {isScanning ? "🛑 Parar Busca" : "🔍 Iniciar Validação"}
@@ -221,34 +218,30 @@ export const ReconhecimentoFacial = () => {
       </div>
 
       {showRegisterModal && (
-        <Modal
-          title="Confirmar Cadastro"
+        <RegisterModal
+          tempName={tempName}
+          setTempName={setTempName}
+          onConfirm={confirmRegistration}
           onClose={closeModals}
-          footer={
-            <button onClick={confirmRegistration} style={styles.successButton}>
-              Salvar
-            </button>
-          }
-        >
-          <input
-            type="text"
-            value={tempName}
-            onChange={(e) => setTempName(e.target.value)}
-            placeholder="Seu nome"
-            style={styles.input}
-            autoFocus
-          />
-        </Modal>
+        />
       )}
 
       {showVerifyModal && validationResult && (
-        <Modal title="Acesso Autorizado!" onClose={closeModals}>
-          <div style={{ color: COLORS.success }}>
-            <div style={{ fontSize: "3rem" }}>✅</div>
-            <h4>Olá, {savedUser?.name}!</h4>
-            <p>Confiança: {validationResult.confidence}</p>
-          </div>
-        </Modal>
+        <VerifyModal
+          isMatch={validationResult.isMatch}
+          confidence={validationResult.confidence}
+          userName={savedUser?.name}
+          onClose={closeModals}
+        />
+      )}
+
+      {alertConfig.show && (
+        <AlertModal
+          title={alertConfig.title}
+          message={alertConfig.message}
+          type={alertConfig.type}
+          onClose={closeModals}
+        />
       )}
 
       {/* Adição de Estilo de Animação via Injeção de CSS */}
@@ -326,43 +319,6 @@ const styles: Record<string, any> = {
     borderRadius: "8px",
     cursor: "pointer",
     fontWeight: "bold",
-  },
-  secondaryButton: {
-    padding: "12px 20px",
-    backgroundColor: COLORS.secondary,
-    color: COLORS.primary,
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-  },
-  successButton: {
-    padding: "12px 20px",
-    backgroundColor: COLORS.success,
-    color: "#fff",
-    border: "none",
-    borderRadius: "8px",
-    cursor: "pointer",
-  },
-  modalOverlay: {
-    position: "fixed",
-    top: 0,
-    left: 0,
-    width: "100%",
-    height: "100%",
-    backgroundColor: COLORS.overlay,
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 1000,
-    backdropFilter: "blur(4px)",
-  },
-  modalContent: {
-    backgroundColor: COLORS.white,
-    padding: "30px",
-    borderRadius: "15px",
-    width: "90%",
-    maxWidth: "350px",
-    textAlign: "center",
   },
   input: {
     width: "100%",
